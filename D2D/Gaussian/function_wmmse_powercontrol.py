@@ -30,55 +30,56 @@ def obj_IA_sum_rate(H, p, var_noise, K):
         y = y+math.log2(1+H[i,i]**2*p[i]/s)
     return y
 
-def batch_WMMSE(p_int, H, Pmax, var_noise):
-    N = p_int.shape[0]
-    K = p_int.shape[1]
-    vnew = 0
-    b = np.sqrt(p_int)
-    f = np.zeros((N,K,1) )
-    w = np.zeros( (N,K,1) )
-    
+# def batch_WMMSE(p_int, H, Pmax, var_noise):
+#     N = p_int.shape[0]
+#     K = p_int.shape[1]
+#     vnew = 0
+#     b = np.sqrt(p_int)
+#     f = np.zeros((N,K,1) )
+#     w = np.zeros( (N,K,1) )
+#
+#
+#     mask = np.eye(K)
+#     rx_power = np.multiply(H, b)
+#     rx_power_s = np.square(rx_power)
+#     valid_rx_power = np.sum(np.multiply(rx_power, mask), 1)
+#
+#     interference = np.sum(rx_power_s, 2) + var_noise
+#     f = np.divide(valid_rx_power,interference)
+#     w = 1/(1-np.multiply(f,valid_rx_power))
+#     #vnew = np.sum(np.log2(w),1)
+#
+#
+#     for ii in range(100):
+#         fp = np.expand_dims(f,1)
+#         rx_power = np.multiply(H.transpose(0,2,1), fp)
+#         valid_rx_power = np.sum(np.multiply(rx_power, mask), 1)
+#         bup = np.multiply(w,valid_rx_power)
+#         rx_power_s = np.square(rx_power)
+#         wp = np.expand_dims(w,1)
+#         bdown = np.sum(np.multiply(rx_power_s,wp),2)
+#         btmp = bup/bdown
+#         b = np.minimum(btmp, np.ones((N,K) )*np.sqrt(Pmax)) + np.maximum(btmp, np.zeros((N,K) )) - btmp
+#
+#         bp = np.expand_dims(b,1)
+#         rx_power = np.multiply(H, bp)
+#         rx_power_s = np.square(rx_power)
+#         valid_rx_power = np.sum(np.multiply(rx_power, mask), 1)
+#         interference = np.sum(rx_power_s, 2) + var_noise
+#         f = np.divide(valid_rx_power,interference)
+#         w = 1/(1-np.multiply(f,valid_rx_power))
+#     p_opt = np.square(b)
+#     return p_opt
 
-    mask = np.eye(K)
-    rx_power = np.multiply(H, b)
-    rx_power_s = np.square(rx_power)
-    valid_rx_power = np.sum(np.multiply(rx_power, mask), 1)
-    
-    interference = np.sum(rx_power_s, 2) + var_noise
-    f = np.divide(valid_rx_power,interference)
-    w = 1/(1-np.multiply(f,valid_rx_power))
-    #vnew = np.sum(np.log2(w),1)
-    
-    
-    for ii in range(100):
-        fp = np.expand_dims(f,1)
-        rx_power = np.multiply(H.transpose(0,2,1), fp)
-        valid_rx_power = np.sum(np.multiply(rx_power, mask), 1)
-        bup = np.multiply(w,valid_rx_power)
-        rx_power_s = np.square(rx_power)
-        wp = np.expand_dims(w,1)
-        bdown = np.sum(np.multiply(rx_power_s,wp),2)
-        btmp = bup/bdown
-        b = np.minimum(btmp, np.ones((N,K) )*np.sqrt(Pmax)) + np.maximum(btmp, np.zeros((N,K) )) - btmp
-        
-        bp = np.expand_dims(b,1)
-        rx_power = np.multiply(H, bp)
-        rx_power_s = np.square(rx_power)
-        valid_rx_power = np.sum(np.multiply(rx_power, mask), 1)
-        interference = np.sum(rx_power_s, 2) + var_noise
-        f = np.divide(valid_rx_power,interference)
-        w = 1/(1-np.multiply(f,valid_rx_power))
-    p_opt = np.square(b)
-    return p_opt
 
 def batch_WMMSE2(p_int, alpha, H, Pmax, var_noise):
+    print("Solving WMMSE?")
     N = p_int.shape[0]
     K = p_int.shape[1]
     vnew = 0
     b = np.sqrt(p_int)
     f = np.zeros((N,K,1) )
     w = np.zeros( (N,K,1) )
-    
 
     mask = np.eye(K)
     rx_power = np.multiply(H, b)
@@ -88,9 +89,8 @@ def batch_WMMSE2(p_int, alpha, H, Pmax, var_noise):
     interference = np.sum(rx_power_s, 2) + var_noise
     f = np.divide(valid_rx_power,interference)
     w = 1/(1-np.multiply(f,valid_rx_power))
-    #vnew = np.sum(np.log2(w),1)
-    
-    
+    # vnew = np.sum(np.log2(w),1)
+
     for ii in range(100):
         fp = np.expand_dims(f,1)
         rx_power = np.multiply(H.transpose(0,2,1), fp)
