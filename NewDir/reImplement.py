@@ -7,10 +7,11 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 import matplotlib.pyplot as plt
 from scipy.spatial import distance_matrix
+from resource_allocation import wmmse, np_sum_rate
 
 
 # Create data for training and testing
-def generate_channels(num_users, num_samples, var_noise=1.0, p_min=1.0, radius=1):
+def generate_channels(num_users, num_samples, var_noise=1.0, radius=1):
     # Network: Consisting multiple pairs of Tx and Rx devices, each pair is considered an user.
     # Input:
     #     num_users: Number of users in the network
@@ -129,14 +130,14 @@ class GCNet(torch.nn.Module):
         return out
 
 
-def sr_loss(data, out, K, device, noise_var):
+def sr_loss(data, out, num_user, device_type, noise_var):
     power = out[:, 2]
-    power = torch.reshape(power, (-1, K, 1))
+    power = torch.reshape(power, (-1, num_user, 1))
     abs_H = data.y
     abs_H_2 = torch.pow(abs_H, 2)
     rx_power = torch.mul(abs_H_2, power)
-    mask = torch.eye(K)
-    mask = mask.to(device)
+    mask = torch.eye(num_user)
+    mask = mask.to(device_type)
     valid_rx_power = torch.sum(torch.mul(rx_power, mask), 1)
     interference = torch.sum(torch.mul(rx_power, 1 - mask), 1) + noise_var
     rate = torch.log(1 + torch.div(valid_rx_power, interference))
@@ -146,12 +147,12 @@ def sr_loss(data, out, K, device, noise_var):
     return loss
 
 
-def training(num_user, noise_var, model, train_loader, device, num_samples, optimizer):
+def training(num_user, noise_var, model, train_loader, device_type, num_samples, optimizer):
     model.train()
 
     total_loss = 0
     for data in train_loader:
-        data = data.to(device)
+        data = data.to(device_type)
         optimizer.zero_grad()
         out = model(data)
         loss = sr_loss(data, out, num_user, device, noise_var)
@@ -161,12 +162,12 @@ def training(num_user, noise_var, model, train_loader, device, num_samples, opti
     return total_loss / num_samples
 
 
-def testing(num_user, noise_var, model, test_loader, device, num_test):
+def testing(num_user, noise_var, model, test_loader, device_type, num_test):
     model.eval()
 
     total_loss = 0
     for data in test_loader:
-        data = data.to(device)
+        data = data.to(device_type)
         with torch.no_grad():
             out = model(data)
             loss = sr_loss(data, out, num_user, device, noise_var)
@@ -230,8 +231,8 @@ if __name__ == '__main__':
 
     num_u = 10  # number of users
     R = 10  # radius
-    num_train = 10000  # number of training samples
-    num_test = 2000  # number of testing  samples
+    num_train = 1000  # number of training samples
+    num_test = 500  # number of testing  samples
     training_epochs = 50  # number of training epochs
     trainseed = 0  # set random seed for training set
     testseed = 7  # set random seed for test set
@@ -240,10 +241,10 @@ if __name__ == '__main__':
     var = 1 / 10 ** (var_db / 10)
     weights_m = np.ones(num_u)
     X_train, position_train, adj_train = generate_channels(num_users=num_u, num_samples=num_train,
-                                                           var_noise=var, p_min=1, radius=R)
+                                                           var_noise=var, radius=R)
 
     X_test, position_test, adj_test = generate_channels(num_users=num_u, num_samples=num_test,
-                                                        var_noise=var, p_min=1, radius=R)
+                                                        var_noise=var, radius=R)
     train_data = process_data(X_train, weights_m)
     test_data = process_data(X_test, weights_m)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -253,10 +254,27 @@ if __name__ == '__main__':
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
     train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=1)
     test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
-    for epoch in range(1, 200):
-        loss1 = training(num_u, var, model, train_loader, device, num_train, optimizer)
-        if epoch % 8 == 0:
-            loss2 = testing(num_u, var, model, test_loader, device, num_train)
-            print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
-                epoch, loss1, loss2))
-        scheduler.step()
+    ## training
+    # for epoch in range(1, 200):
+    #     loss1 = training(num_u, var, model, train_loader, device, num_train, optimizer)
+    #     if epoch % 8 == 0:
+    #         loss2 = testing(num_u, var, model, test_loader, device, num_train)
+    #         print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
+    #             epoch, loss1, loss2))
+    #     scheduler.step()
+    #
+    # torch.save(model.state_dict(), 'model.pth')
+    ###
+
+    Pmax = 1
+    p = wmmse(weights_m, X_test, Pmax, var)
+    print('wmmse:', np_sum_rate(X_test.transpose(0, 2, 1), p, weights_m, var))
+
+    # create an instance of your model
+    model = GCNet().to(device)
+
+    # load the state dictionary from the saved file
+    model.load_state_dict(torch.load('model.pth'))
+    loss2 = testing(num_u, var, model, test_loader, device, num_test)
+
+    print('GCNet:', -loss2)
