@@ -7,7 +7,7 @@ from torch_geometric.data import Data
 
 from reImplement import GCNet
 
-# test
+# test 2 test
 def generate_channels_cell_wireless(num_bs, num_users, num_samples, var_noise=1.0, radius=1):
     # Network: Consisting multiple pairs of Tx and Rx devices, each pair is considered an user.
     # Input:
