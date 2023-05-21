@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 from scipy.spatial import distance_matrix
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
-
 from reImplement import GCNet
+
 
 # test 2 test
 def generate_channels_cell_wireless(num_bs, num_users, num_samples, var_noise=1.0, radius=1):
@@ -30,42 +30,46 @@ def generate_channels_cell_wireless(num_bs, num_users, num_samples, var_noise=1.
     # generate position
     dist_mat = []
     position = []
-    for each_sample in range(num_samples):
-        pos = []
-        pos_BS = []
-
-        for i in range(num_bs):
-            r = radius * np.random.rand()
-            theta = np.random.rand() * 2 * np.pi
-            pos_BS.append([r * np.sin(theta), r * np.cos(theta)])
-            pos.append([r * np.sin(theta), r * np.cos(theta)])
-        pos_user = []
-
-        for i in range(num_users):
-            r = radius + radius * np.random.rand()
-            theta = np.random.rand() * 2 * np.pi
-            pos_user.append([r * np.sin(theta), r * np.cos(theta)])
-            pos.append([r * np.sin(theta), r * np.cos(theta)])
-
-        pos = np.array(pos)
-        pos_BS = np.array(pos_BS)
-        dist_matrix = distance_matrix(pos_BS, pos_user)
-        # dist_matrixp = distance_matrix(pos[1:], pos[1:])
-        dist_mat.append(dist_matrix)
-        position.append(pos)
-
-    dist_mat = np.array(dist_mat)
-    position = np.array(position)
-
-    # Calculate Free space pathloss
-    f = 6e9
-    c = 3e8
-    FSPL = 1 / ((4 * np.pi * f * dist_mat / c) ** 2)
 
     # Calculate channel
     CH = 1 / np.sqrt(2) * (np.random.randn(num_samples, 1, num_users)
                            + 1j * np.random.randn(num_samples, 1, num_users))
-    Hs = abs(CH * FSPL)
+
+    if radius == 0:
+        Hs = abs(CH)
+    else:
+        for each_sample in range(num_samples):
+            pos = []
+            pos_BS = []
+
+            for i in range(num_bs):
+                r = radius * (np.random.rand() + 0.1)
+                theta = np.random.rand() * 2 * np.pi
+                pos_BS.append([r * np.sin(theta), r * np.cos(theta)])
+                pos.append([r * np.sin(theta), r * np.cos(theta)])
+            pos_user = []
+
+            for i in range(num_users):
+                r = radius + radius * np.random.rand()
+                theta = np.random.rand() * 2 * np.pi
+                pos_user.append([r * np.sin(theta), r * np.cos(theta)])
+                pos.append([r * np.sin(theta), r * np.cos(theta)])
+
+            pos = np.array(pos)
+            pos_BS = np.array(pos_BS)
+            dist_matrix = distance_matrix(pos_BS, pos_user)
+            # dist_matrixp = distance_matrix(pos[1:], pos[1:])
+            dist_mat.append(dist_matrix)
+            position.append(pos)
+
+        dist_mat = np.array(dist_mat)
+        position = np.array(position)
+
+        # Calculate Free space pathloss
+        f = 6e9
+        c = 3e8
+        FSPL = 1 / ((4 * np.pi * f * dist_mat / c) ** 2)
+        Hs = abs(CH * FSPL)
 
     adj = adj_matrix(num_users)
 
@@ -85,12 +89,12 @@ def adj_matrix(num_users):
 
 # GNN configuration
 
-def loss_function(out, regularization, p_max):
+def loss_function(data, out, regularization):
     power = out[:, 2]
     num_user = out.shape[0]
     noise_var = out[1, 1]
     power = torch.reshape(power, (-1, num_user, 1))
-    abs_H = out[:, 0]
+    abs_H = data.y
     abs_H_2 = torch.pow(abs_H, 2)
     all_signal = torch.mul(abs_H_2, power)[0]
     ############
@@ -101,7 +105,8 @@ def loss_function(out, regularization, p_max):
     interference.fill_diagonal_(0)
     interference = torch.sum(interference, 0)
     rate = torch.log(1 + torch.div(desired_sig, interference + noise))
-    p_constraint = power - torch.ones((1, num_user)) * p_max
+    p_max_m = out[:, 0]
+    p_constraint = power - p_max_m
     ################
     sum_rate = torch.mean(torch.sum(rate, 1) - regularization * p_constraint)
 
@@ -109,7 +114,7 @@ def loss_function(out, regularization, p_max):
     return loss
 
 
-def model_training(regularization, p_max, model, train_load, device_type, num_samples, optimizer):
+def model_training(regularization, model, train_load, device_type, num_samples, optimizer):
     model.train()
 
     total_loss = 0
@@ -117,28 +122,29 @@ def model_training(regularization, p_max, model, train_load, device_type, num_sa
         data = data.to(device_type)
         optimizer.zero_grad()
         out = model(data)
-        loss = loss_function(out, regularization, p_max)
+        loss = loss_function(data, out, regularization)
         loss.backward()
         total_loss += loss.item() * data.num_graphs
         optimizer.step()
     return total_loss / num_samples
 
 
-def model_testing(regularization, p_max, model, test_load, device_type, num_test):
+def model_testing(regularization, model, test_load, device_type, num_samples):
     model.eval()
     total_loss = 0
     for data in test_load:
         data = data.to(device_type)
         with torch.no_grad():
             out = model(data)
-            loss = loss_function(out, regularization, p_max)
+            loss = loss_function(data, out, regularization)
             total_loss += loss.item() * data.num_graphs
-    return total_loss / num_test
+    return total_loss / num_samples
 
 
-def graph_build(channel_matrix, adjacency_matrix, noise_var):
+def graph_build(channel_matrix, adjacency_matrix, noise_var, p_max):
     num_user = channel_matrix.shape[1]
-    x1 = np.transpose(channel_matrix)
+    # x1 = np.transpose(channel_matrix)
+    x1 = np.ones((num_user, 1)) * p_max
     x2 = np.ones((num_user, 1)) * noise_var
     x3 = np.ones((num_user, 1))
     x = np.concatenate((x1, x2, x3),axis=1)
@@ -149,18 +155,18 @@ def graph_build(channel_matrix, adjacency_matrix, noise_var):
         rx = each_interfence[1]
         tmp = [channel_matrix[0, tx], channel_matrix[0, rx]]
         edge_attr.append(tmp)
-    # y =
+    y = np.transpose(channel_matrix)
     # pos =
     data = Data(x=torch.tensor(x, dtype=torch.float),
                 edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
                 edge_attr=torch.tensor(edge_attr, dtype=torch.float),
-                # y=torch.tensor(y, dtype=torch.float),
+                y=torch.tensor(y, dtype=torch.float),
                 # pos=torch.tensor(pos, dtype=torch.float)
                 )
     return data
 
 
-def process_data(channel_matrices, noise_var):
+def process_data(channel_matrices, noise_var, p_max):
     num_samples = channel_matrices.shape[0]
     num_user = channel_matrices.shape[2]
     data_list = []
@@ -168,7 +174,8 @@ def process_data(channel_matrices, noise_var):
     for i in range(num_samples):
         data = graph_build(channel_matrix=channel_matrices[i],
                            adjacency_matrix=adj,
-                           noise_var=noise_var
+                           noise_var=noise_var,
+                           p_max=p_max
                            )
         data_list.append(data)
     return data_list
@@ -196,22 +203,24 @@ if __name__ == '__main__':
     #
     # gcn_model = GCNet()
 
-    train_data = process_data(X_train, var)
-    test_data = process_data(X_test, var)
+    train_data = process_data(X_train, pmax, var)
+    test_data = process_data(X_test, pmax, var)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(torch.cuda.is_available())
     gcn_model = GCNet().to(device)
-    optimizer = torch.optim.Adam(gcn_model.parameters(), lr=0.001)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
-    train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=1)
-    test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
-
-    for epoch in range(1, 200):
-        loss1 = model_training(reg, pmax, gcn_model, train_loader, device, num_train, optimizer)
-        if epoch % 8 == 0:
-            loss2 = model_testing(N, var, gcn_model, test_loader, device, num_train)
-            print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
-                epoch, loss1, loss2))
-        scheduler.step()
-
-    torch.save(gcn_model.state_dict(), 'model.pth')
+    print(gcn_model)
+    #
+    # optimizer = torch.optim.Adam(gcn_model.parameters(), lr=0.001)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
+    # train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=1)
+    # test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
+    #
+    # for epoch in range(1, 200):
+    #     loss1 = model_training(reg, gcn_model, train_loader, device, num_train, optimizer)
+    #     if epoch % 8 == 0:
+    #         loss2 = model_testing(reg, gcn_model, test_loader, device, num_train)
+    #         print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
+    #             epoch, loss1, loss2))
+    #     scheduler.step()
+    #
+    # torch.save(gcn_model.state_dict(), 'model.pth')
