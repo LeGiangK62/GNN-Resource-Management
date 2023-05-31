@@ -43,14 +43,14 @@ def generate_channels_cell_wireless(num_bs, num_users, num_samples, var_noise=1.
             pos_BS = []
 
             for i in range(num_bs):
-                r = radius * (np.random.rand() + 0.1)
+                r = 0.2 * radius * (np.random.rand())
                 theta = np.random.rand() * 2 * np.pi
                 pos_BS.append([r * np.sin(theta), r * np.cos(theta)])
                 pos.append([r * np.sin(theta), r * np.cos(theta)])
             pos_user = []
 
             for i in range(num_users):
-                r = radius + radius * np.random.rand()
+                r = 0.5 * radius + 0.5 * radius * np.random.rand()
                 theta = np.random.rand() * 2 * np.pi
                 pos_user.append([r * np.sin(theta), r * np.cos(theta)])
                 pos.append([r * np.sin(theta), r * np.cos(theta)])
