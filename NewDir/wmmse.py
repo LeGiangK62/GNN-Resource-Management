@@ -1,8 +1,74 @@
 import numpy as np
-from cell_wireless import generate_channels_cell_wireless
+# from cell_wireless import generate_channels_cell_wireless
 import matplotlib.pyplot as plt
 
-from log_algorithm_resource import log_algorithm
+
+def generate_channels_cell_wireless(num_bs, num_users, num_samples, var_noise=1.0, radius=1):
+    # Network: Consisting multiple pairs of Tx and Rx devices, each pair is considered an user.
+    # Input:
+    #     num_users: Number of users in the network
+    #     num_samples: Number of samples using for the model
+    #     var_noise: variance of the AWGN
+    #     p_min: minimum power for each user
+    # Output:
+    #     Hs: channel matrices of all users in the network - size num_samples x num_users x num_users
+    #        H(i,j) is the channel from Tx of the i-th pair to Rx or the j-th pair
+    #     pos: position of all users in the network (?)
+    #     pos[:num_bs] is the position of the BS(s)
+    #     pos[num_bs:num_bs+num_users] is the position of the user(s)
+    #     adj: adjacency matrix of all users in the network - only "1" if interference occurs
+
+    print("Generating Data for training and testing")
+
+    if num_bs != 1:
+        raise Exception("Can not generate data for training and testing with more than 1 base station")
+    # generate position
+    dist_mat = []
+    position = []
+
+    # Calculate channel
+    CH = 1 / np.sqrt(2) * (np.random.randn(num_samples, 1, num_users)
+                           + 1j * np.random.randn(num_samples, 1, num_users))
+
+    if radius == 0:
+        Hs = abs(CH)
+    else:
+        for each_sample in range(num_samples):
+            pos = []
+            pos_BS = []
+
+            for i in range(num_bs):
+                r = 0.2 * radius * (np.random.rand())
+                theta = np.random.rand() * 2 * np.pi
+                pos_BS.append([r * np.sin(theta), r * np.cos(theta)])
+                pos.append([r * np.sin(theta), r * np.cos(theta)])
+            pos_user = []
+
+            for i in range(num_users):
+                r = 0.5 * radius + 0.5 * radius * np.random.rand()
+                theta = np.random.rand() * 2 * np.pi
+                pos_user.append([r * np.sin(theta), r * np.cos(theta)])
+                pos.append([r * np.sin(theta), r * np.cos(theta)])
+
+            pos = np.array(pos)
+            pos_BS = np.array(pos_BS)
+            dist_matrix = distance_matrix(pos_BS, pos_user)
+            # dist_matrixp = distance_matrix(pos[1:], pos[1:])
+            dist_mat.append(dist_matrix)
+            position.append(pos)
+
+        dist_mat = np.array(dist_mat)
+        position = np.array(position)
+
+        # Calculate Free space pathloss
+        f = 6e9
+        c = 3e8
+        FSPL = 1 / ((4 * np.pi * f * dist_mat / c) ** 2)
+        Hs = abs(CH * FSPL)
+
+    adj = adj_matrix(num_users)
+
+    return Hs, position, adj
 
 
 def draw_network(position, radius):
@@ -25,9 +91,10 @@ def wmmse_cell_network(channel_matrix, power_matrix, weight_matrix, p_max, noise
 
     all_rx_signal = channel_matrix.transpose(0, 2, 1) @ power
     desired_power = np.diagonal(all_rx_signal, axis1=1, axis2=2)
+    desired_power = np.expand_dims(desired_power, axis=1)
     interference = np.square(all_rx_signal)
     interference = np.sum(interference, 2)  # interfernce at each UE => sum of columns
-    # Init the U and W
+    interference = np.expand_dims(interference, axis=1)
     U = np.divide(desired_power, interference + noise)
     W = 1 / (1 - (U * desired_power))
     # The main loop
@@ -38,10 +105,14 @@ def wmmse_cell_network(channel_matrix, power_matrix, weight_matrix, p_max, noise
         V_Prev = power
         all_rx_signal = channel_matrix.transpose(0, 2, 1) @ U
         desired_power = np.diagonal(all_rx_signal, axis1=1, axis2=2)
+        desired_power = np.expand_dims(desired_power, axis=1)
         desired_power = weight_matrix * W * desired_power
         interference = np.square(all_rx_signal)
-        interference = weight_matrix * interference * W
+        wei_exp = np.tile(weight_matrix, (1, 10, 1))
+        W_exp = np.tile(W, (1, 10, 1))
+        interference = wei_exp * interference * W_exp
         interference = np.sum(interference, 2)
+        interference = np.expand_dims(interference, axis=1)
 
         V = desired_power / interference
 
@@ -51,8 +122,10 @@ def wmmse_cell_network(channel_matrix, power_matrix, weight_matrix, p_max, noise
         # Update U and W
         all_rx_signal = channel_matrix.transpose(0, 2, 1) @ V
         desired_power = np.diagonal(all_rx_signal, axis1=1, axis2=2)
+        desired_power = np.expand_dims(desired_power, axis=1)
         interference = np.square(all_rx_signal)
         interference = np.sum(interference, 2)
+        interference = np.expand_dims(interference, axis=1)
         U = np.divide(desired_power, interference + noise)
         W = 1 / (1 - (U * desired_power))
 
@@ -71,39 +144,3 @@ def check_convergence(count):
         return True
     else:
         return False
-
-
-if __name__ == '__main__':
-    K = 1  # number of BS(s)
-    N = 3  # number of users
-    R = 0  # radius
-    p_mtx = np.ones((1, K, N)) * 10
-    p_max = np.ones((1, K, N)) * 4
-
-    num_train = 1  # number of training samples
-    num_test = 10  # number of test samples
-
-    reg = 1e-2
-    pmax = 1
-    var_db = 10
-    var = 1 / 10 ** (var_db / 10)
-    weight = np.random.rand(1, K, N)
-
-    X_train, pos_train, adj_train = generate_channels_cell_wireless(K, N, num_train, var, R)
-
-    # X_train = np.array([[[0.49632743, 0.45383659, 0.44659692]]])
-
-    weights_matrix = np.array([[[1, 1, 1]]])
-    power = np.array([[[1, 2, 4]]])
-    var_noise = np.array([[[0.1, 0.1, 0.1]]])
-
-    p_wmmse = wmmse_cell_network(X_train, power, weights_matrix, p_max, var_noise)
-    print(p_wmmse)
-
-    # # draw_network(pos_train, R)
-    # Using log_approximation algorithm
-    # p_mtx = np.ones((1, N)) * 0.01
-    # p_max = np.ones((1, N)) * 2
-    # p_log,  all_sum, solution, pbar = log_algorithm(N, X_train[0, :], var, p_max, p_mtx)
-    # print(p_log)
-

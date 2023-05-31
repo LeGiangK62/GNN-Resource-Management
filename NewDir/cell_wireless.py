@@ -5,6 +5,7 @@ from scipy.spatial import distance_matrix
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Data
 from reImplement import GCNet
+from wmmse import wmmse_cell_network
 
 
 # test 2 test
@@ -185,9 +186,9 @@ if __name__ == '__main__':
 
     K = 1  # number of BS(s)
     N = 10  # number of users
-    R = 10  # radius
+    R = 0  # radius
 
-    num_train = 100  # number of training samples
+    num_train = 2  # number of training samples
     num_test = 10  # number of test samples
 
     reg = 1e-2
@@ -203,24 +204,26 @@ if __name__ == '__main__':
     #
     # gcn_model = GCNet()
 
+    p_wmmse = wmmse_cell_network(X_train, np.ones((num_train, K, N)) * pmax, np.ones((num_train, K, N)), np.ones((num_train, K, N)) * pmax, np.ones((num_train, K, N)) * var)
+    print(p_wmmse)
+
     train_data = process_data(X_train, pmax, var)
     test_data = process_data(X_test, pmax, var)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(torch.cuda.is_available())
     gcn_model = GCNet().to(device)
-    print(gcn_model)
-    #
-    # optimizer = torch.optim.Adam(gcn_model.parameters(), lr=0.001)
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
-    # train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=1)
-    # test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
-    #
-    # for epoch in range(1, 200):
-    #     loss1 = model_training(reg, gcn_model, train_loader, device, num_train, optimizer)
-    #     if epoch % 8 == 0:
-    #         loss2 = model_testing(reg, gcn_model, test_loader, device, num_train)
-    #         print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
-    #             epoch, loss1, loss2))
-    #     scheduler.step()
+
+    optimizer = torch.optim.Adam(gcn_model.parameters(), lr=0.001)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
+    train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=1)
+    test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
+
+    for epoch in range(1, 200):
+        loss1 = model_training(reg, gcn_model, train_loader, device, num_train, optimizer)
+        if epoch % 8 == 0:
+            loss2 = model_testing(reg, gcn_model, test_loader, device, num_train)
+            print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
+                epoch, loss1, loss2))
+        scheduler.step()
     #
     # torch.save(gcn_model.state_dict(), 'model.pth')

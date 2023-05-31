@@ -254,27 +254,29 @@ if __name__ == '__main__':
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
     train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=1)
     test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
-    ## training
-    # for epoch in range(1, 200):
-    #     loss1 = training(num_u, var, model, train_loader, device, num_train, optimizer)
-    #     if epoch % 8 == 0:
-    #         loss2 = testing(num_u, var, model, test_loader, device, num_train)
-    #         print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
-    #             epoch, loss1, loss2))
-    #     scheduler.step()
+    # training
+    for epoch in range(1, 200):
+        loss1 = training(num_u, var, model, train_loader, device, num_train, optimizer)
+        if epoch % 8 == 0:
+            loss2 = testing(num_u, var, model, test_loader, device, num_train)
+            print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
+                epoch, loss1, loss2))
+        scheduler.step()
+
+    torch.save(model.state_dict(), 'model.pth')
+    ##
+
+    # region Testing
+    # Pmax = 1
+    # p = wmmse(weights_m, X_test, Pmax, var)
+    # print('wmmse:', np_sum_rate(X_test.transpose(0, 2, 1), p, weights_m, var))
     #
-    # torch.save(model.state_dict(), 'model.pth')
-    ###
-
-    Pmax = 1
-    p = wmmse(weights_m, X_test, Pmax, var)
-    print('wmmse:', np_sum_rate(X_test.transpose(0, 2, 1), p, weights_m, var))
-
-    # create an instance of your model
-    model = GCNet().to(device)
-
-    # load the state dictionary from the saved file
-    model.load_state_dict(torch.load('model.pth'))
-    loss2 = testing(num_u, var, model, test_loader, device, num_test)
-
-    print('GCNet:', -loss2)
+    # # create an instance of your model
+    # model = GCNet().to(device)
+    #
+    # # load the state dictionary from the saved file
+    # model.load_state_dict(torch.load('model.pth'))
+    # loss2 = testing(num_u, var, model, test_loader, device, num_test)
+    #
+    # print('GCNet:', -loss2)
+    # endregion
