@@ -95,7 +95,7 @@ def loss_function(data, out, regularization):
     num_user = out.shape[0]
     noise_var = out[1, 1]
     power = torch.reshape(power, (-1, num_user, 1))
-    abs_H = data.y
+    abs_H = data.pos
     abs_H_2 = torch.pow(abs_H, 2)
     all_signal = torch.mul(abs_H_2, power)[0]
     ############
@@ -112,6 +112,17 @@ def loss_function(data, out, regularization):
     sum_rate = torch.mean(torch.sum(rate, 1) - regularization * p_constraint)
 
     loss = torch.neg(sum_rate)
+    return loss
+
+
+def supervised_loss_function(data, out, regularization):
+    power = out[:, 2]
+    num_user = out.shape[0]
+    power = torch.reshape(power, (-1, num_user, 1))
+    ground_truth = data.y
+    ground_truth = torch.reshape(ground_truth, (-1, num_user, 1))
+    criterion = torch.nn.MSELoss()
+    loss = criterion(power, ground_truth)
     return loss
 
 
@@ -142,7 +153,34 @@ def model_testing(regularization, model, test_load, device_type, num_samples):
     return total_loss / num_samples
 
 
-def graph_build(channel_matrix, adjacency_matrix, noise_var, p_max):
+def model_supervised_training(regularization, model, train_load, device_type, num_samples, optimizer):
+    model.train()
+
+    total_loss = 0
+    for data in train_load:
+        data = data.to(device_type)
+        optimizer.zero_grad()
+        out = model(data)
+        loss = supervised_loss_function(data, out, regularization)
+        loss.backward()
+        total_loss += loss.item() * data.num_graphs
+        optimizer.step()
+    return total_loss / num_samples
+
+
+def model_supervised_testing(regularization, model, test_load, device_type, num_samples):
+    model.eval()
+    total_loss = 0
+    for data in test_load:
+        data = data.to(device_type)
+        with torch.no_grad():
+            out = model(data)
+            loss = supervised_loss_function(data, out, regularization)
+            total_loss += loss.item() * data.num_graphs
+    return total_loss / num_samples
+
+
+def graph_build(channel_matrix, adjacency_matrix, noise_var, p_max, ground_truth=None):
     num_user = channel_matrix.shape[1]
     # x1 = np.transpose(channel_matrix)
     x1 = np.ones((num_user, 1)) * p_max
@@ -156,18 +194,22 @@ def graph_build(channel_matrix, adjacency_matrix, noise_var, p_max):
         rx = each_interfence[1]
         tmp = [channel_matrix[0, tx], channel_matrix[0, rx]]
         edge_attr.append(tmp)
-    y = np.transpose(channel_matrix)
+    pos = np.transpose(channel_matrix)
+    if ground_truth is not None:
+        y = ground_truth
+    else:
+        y = 0
     # pos =
     data = Data(x=torch.tensor(x, dtype=torch.float),
                 edge_index=torch.tensor(edge_index, dtype=torch.long).t().contiguous(),
                 edge_attr=torch.tensor(edge_attr, dtype=torch.float),
                 y=torch.tensor(y, dtype=torch.float),
-                # pos=torch.tensor(pos, dtype=torch.float)
+                pos=torch.tensor(pos, dtype=torch.float)
                 )
     return data
 
 
-def process_data(channel_matrices, noise_var, p_max):
+def process_data(channel_matrices, noise_var, p_max, ground_truth=None):
     num_samples = channel_matrices.shape[0]
     num_user = channel_matrices.shape[2]
     data_list = []
@@ -176,7 +218,8 @@ def process_data(channel_matrices, noise_var, p_max):
         data = graph_build(channel_matrix=channel_matrices[i],
                            adjacency_matrix=adj,
                            noise_var=noise_var,
-                           p_max=p_max
+                           p_max=p_max,
+                           ground_truth=None if ground_truth is None else ground_truth[i]
                            )
         data_list.append(data)
     return data_list
@@ -188,7 +231,7 @@ if __name__ == '__main__':
     N = 10  # number of users
     R = 0  # radius
 
-    num_train = 2  # number of training samples
+    num_train = 5  # number of training samples
     num_test = 10  # number of test samples
 
     reg = 1e-2
@@ -204,11 +247,36 @@ if __name__ == '__main__':
     #
     # gcn_model = GCNet()
 
-    p_wmmse = wmmse_cell_network(X_train, np.ones((num_train, K, N)) * pmax, np.ones((num_train, K, N)), np.ones((num_train, K, N)) * pmax, np.ones((num_train, K, N)) * var)
-    print(p_wmmse)
+    p_wmmse_train = wmmse_cell_network(X_train, np.ones((num_train, K, N)) * pmax, np.ones((num_train, K, N)), np.ones((num_train, K, N)) * pmax, np.ones((num_train, K, N)) * var)
 
-    train_data = process_data(X_train, pmax, var)
-    test_data = process_data(X_test, pmax, var)
+    p_wmmse_test = wmmse_cell_network(X_test, np.ones((num_test, K, N)) * pmax, np.ones((num_test, K, N)),
+                                 np.ones((num_test, K, N)) * pmax, np.ones((num_test, K, N)) * var)
+
+
+    # region Unsupervied Learning
+    # train_data = process_data(X_train, pmax, var)
+    # test_data = process_data(X_test, pmax, var)
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # print(torch.cuda.is_available())
+    # gcn_model = GCNet().to(device)
+    #
+    # optimizer = torch.optim.Adam(gcn_model.parameters(), lr=0.001)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
+    # train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=1)
+    # test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
+    #
+    # for epoch in range(1, 200):
+    #     loss1 = model_training(reg, gcn_model, train_loader, device, num_train, optimizer)
+    #     if epoch % 8 == 0:
+    #         loss2 = model_testing(reg, gcn_model, test_loader, device, num_train)
+    #         print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
+    #             epoch, loss1, loss2))
+    #     scheduler.step()
+    # endregion
+
+    # region Supervised learning
+    train_data = process_data(X_train, pmax, var, p_wmmse_train)
+    test_data = process_data(X_test, pmax, var, p_wmmse_test)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(torch.cuda.is_available())
     gcn_model = GCNet().to(device)
@@ -219,11 +287,12 @@ if __name__ == '__main__':
     test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
 
     for epoch in range(1, 200):
-        loss1 = model_training(reg, gcn_model, train_loader, device, num_train, optimizer)
+        loss1 = model_supervised_training(reg, gcn_model, train_loader, device, num_train, optimizer)
         if epoch % 8 == 0:
-            loss2 = model_testing(reg, gcn_model, test_loader, device, num_train)
+            loss2 = model_supervised_testing(reg, gcn_model, test_loader, device, num_train)
             print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
                 epoch, loss1, loss2))
         scheduler.step()
+    # endregion
     #
     # torch.save(gcn_model.state_dict(), 'model.pth')
