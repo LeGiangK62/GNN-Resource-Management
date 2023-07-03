@@ -3,21 +3,24 @@ import torch
 import matplotlib.pyplot as plt
 from scipy.spatial import distance_matrix
 from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
+from torch_geometric.nn.conv import MessagePassing
+from torch.nn import Sequential as Seq, Linear as Lin, ReLU, Sigmoid, BatchNorm1d as BN
 
 from reImplement import GCNet
 from setup_arguments import setup_args
 
 
 def generate_channels_wsn(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
-    print("Generating Data for training and testing")
+    # print("Generating Data for training and testing")
 
     # if num_ap != 1:
     #     raise Exception("Can not generate data for training and testing with more than 1 base station")
     # generate position
     dist_mat = []
     position = []
-    index_user = np.tile(np.arange(N), (K,1))
-    index_ap = np.tile(np.arange(K).reshape(-1, 1), (1, N))
+    index_user = np.tile(np.arange(num_user), (num_ap, 1))
+    index_ap = np.tile(np.arange(num_ap).reshape(-1, 1), (1, num_user))
 
     index = np.array([index_user, index_ap])
 
@@ -100,6 +103,64 @@ def draw_network(position, radius, num_user, num_ap):
     plt.show()
 
 
+class IGConv(MessagePassing):
+    def __init__(self, mlp1, mlp2, **kwargs):
+        super(IGConv, self).__init__(aggr='max', **kwargs)
+
+        self.mlp1 = mlp1
+        self.mlp2 = mlp2
+        # self.reset_parameters()
+
+    def reset_parameters(self):
+        reset(self.mlp1)
+        reset(self.mlp2)
+
+    def update(self, aggr_out, x):
+        tmp = torch.cat([x, aggr_out], dim=1)
+        comb = self.mlp2(tmp)
+        return torch.cat([x[:, :2], comb], dim=1)
+
+    def forward(self, x, edge_index, edge_attr):
+        x = x.unsqueeze(-1) if x.dim() == 1 else x
+        edge_attr = edge_attr.unsqueeze(-1) if edge_attr.dim() == 1 else edge_attr
+        return self.propagate(edge_index, x=x, edge_attr=edge_attr)
+
+    def message(self, x_i, x_j, edge_attr):
+        tmp = torch.cat([x_j, edge_attr], dim=1)
+        agg = self.mlp1(tmp)
+        return agg
+
+    def __repr__(self):
+        return '{}(nn={})'.format(self.__class__.__name__, self.mlp1, self.mlp2)
+
+
+def MLP(channels, batch_norm=True):
+    return Seq(*[
+        Seq(Lin(channels[i - 1], channels[i], bias=True), ReLU())  # , BN(channels[i]))
+        for i in range(1, len(channels))
+    ])
+
+
+class IGCNet(torch.nn.Module):
+    def __init__(self):
+        super(IGCNet, self).__init__()
+
+        self.mlp1 = MLP([5, 16, 32])
+        self.mlp2 = MLP([35, 16])
+        self.mlp2 = Seq(*[self.mlp2, Seq(Lin(16, 1, bias=True), Sigmoid())])
+        self.conv = IGConv(self.mlp1, self.mlp2)
+
+    def forward(self, data):
+        x0, edge_attr, edge_index = data.x, data.edge_attr, data.edge_index
+        x1 = self.conv(x=x0, edge_index=edge_index, edge_attr=edge_attr)
+        x2 = self.conv(x=x1, edge_index=edge_index, edge_attr=edge_attr)
+        # x3 = self.conv(x = x2, edge_index = edge_index, edge_attr = edge_attr)
+        # x4 = self.conv(x = x3, edge_index = edge_index, edge_attr = edge_attr)
+        out = self.conv(x=x2, edge_index=edge_index, edge_attr=edge_attr)
+        return out
+
+
+
 def graph_build(channel_matrix, index_matrix):
     num_user, num_ap = channel_matrix.shape
     adjacency_matrix = adj_matrix(num_user * num_ap)
@@ -108,8 +169,8 @@ def graph_build(channel_matrix, index_matrix):
     index_ap = np.reshape(index_matrix[1], (-1, 1))
 
     x1 = np.reshape(channel_matrix, (-1, 1))
-    x2 = np.ones((N * K, 1)) # power max here, for each?
-    x3 = np.zeros((N * K, 1))
+    x2 = np.ones((num_user * num_ap, 1)) # power max here, for each?
+    x3 = np.zeros((num_user * num_ap, 1))
     x = np.concatenate((x1, x2, x3),axis=1)
 
     edge_index = adjacency_matrix
@@ -146,78 +207,84 @@ def build_all_data(channel_matrices, index_mtx):
 
     return data_list
 
-def training_loss(data, out):
-    G =
+def data_rate_calc(data, out, num_ap, num_user, train = True):
+    G = torch.reshape(out[:, 0], (-1, num_ap, num_user))
     # how to get channel from data and output
-    P = np.array([[1, 0, 0, 1],
-                  [0, 1, 0, 0],
-                  [0, 0, 1, 0]]
-                 )
-    desired_signal = np.sum(P * G, axis=1)
-    P_UE = np.sum(P, axis=0)
-    all_received_signal = G @ P_UE
+    P = torch.reshape(out[:, 2], (-1, num_ap, num_user))
+    desired_signal = torch.sum(torch.mul(P,G), axis=2).unsqueeze(-1)
+    P_UE = torch.sum(P, axis=1).unsqueeze(-1)
+    all_received_signal = torch.matmul(G, P_UE)
     interference = all_received_signal - desired_signal
     rate = torch.log(1 + torch.div(desired_signal, interference))
     sum_rate = torch.mean(torch.sum(rate, 1))
-    loss = torch.neg(sum_rate)
-    return loss
-
-
-    power = out[:, 2]
-    power = torch.reshape(power, (-1, num_user, 1))
-    abs_H = data.y
-    abs_H_2 = torch.pow(abs_H, 2)
-    rx_power = torch.mul(abs_H_2, power)
-    mask = torch.eye(num_user)
-    mask = mask.to(device_type)
-    valid_rx_power = torch.sum(torch.mul(rx_power, mask), 1)
-    interference = torch.sum(torch.mul(rx_power, 1 - mask), 1) + noise_var
-    rate = torch.log(1 + torch.div(valid_rx_power, interference))
-    w_rate = torch.mul(data.pos, rate)
-    sum_rate = torch.mean(torch.sum(w_rate, 1))
-    loss = torch.neg(sum_rate)
-    return loss
-    return 1
-
-
-def training_model():
-
-
-    return 1
-
-
-def testing_model():
-
-    return 1
-
-
-
+    if train:
+        return torch.neg(sum_rate)
+    else:
+        return sum_rate
 
 
 if __name__ == '__main__':
-    args = setup_args()
+    # args = setup_args()
 
 
     K = 3  # number of APs
-    N = 3  # number of nodes
+    N = 4  # number of nodes
     R = 10  # radius
 
-    num_train = 2  # number of training samples
-    num_test = 10  # number of test samples
+    num_train = 20  # number of training samples
+    num_test = 4  # number of test samples
 
     reg = 1e-2
     pmax = 1
     var_db = 10
     var = 1 / 10 ** (var_db / 10)
 
+    # Generate Data for training and testing
     X_train, pos_train, adj_train, index_train = generate_channels_wsn(K, N, num_train, var, R)
+    X_test, pos_test, adj_test, index_test = generate_channels_wsn(K + 1, N + 10, num_test, var, R)
 
-    # draw_network(pos_train[0], R, N, K)
+    # Preparing Data in to graph structured for model
+    train_data_list = build_all_data(X_train, index_train)
+    test_data_list = build_all_data(X_test, index_test)
 
-    print(pos_train.shape)
-    print(X_train.shape)
-    print(pos_train)
-    print(X_train)
-    # print(pos_train)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    model = GCNet().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
+
+    train_loader = DataLoader(train_data_list, batch_size=64, shuffle=True, num_workers=1)
+    test_loader = DataLoader(test_data_list, batch_size=2000, shuffle=False, num_workers=1)
+
+
+    # Training and Testing model
+    for epoch in range(1, 200):
+        total_loss = 0
+        for each_data in train_loader:
+            data = each_data.to(device)
+            optimizer.zero_grad()
+            out = model(data)
+            loss = data_rate_calc(data, out, K, N, train=True)
+            loss.backward()
+            total_loss += loss.item() + data.num_graphs
+            optimizer.step()
+
+        train_loss = total_loss / num_train
+
+        if (epoch % 8 == 0):
+            model.eval()
+            total_loss = 0
+            for each_data in test_loader:
+                data = each_data.to(device)
+                out = model(data)
+                loss = data_rate_calc(data, out, K + 1, N + 10, train=False)
+                total_loss += loss.item() + data.num_graphs
+
+            test_loss = total_loss / num_test
+
+            print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
+                epoch, train_loss, test_loss))
+        scheduler.step()
+
 
 
