@@ -115,7 +115,7 @@ class GCNet(torch.nn.Module):
     def __init__(self, ):
         super(GCNet, self).__init__()
 
-        self.mlp1 = mlp([5, 16, 32])
+        self.mlp1 = mlp([4, 16, 32])
         self.mlp2 = mlp([35, 16])
         self.mlp2 = Seq(*[self.mlp2, Seq(Lin(16, 1, bias=True), Sigmoid())])
         self.conv = GConvLayer(self.mlp1, self.mlp2)
