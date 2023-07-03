@@ -254,24 +254,24 @@ if __name__ == '__main__':
 
 
     # region Unsupervied Learning
-    # train_data = process_data(X_train, pmax, var)
-    # test_data = process_data(X_test, pmax, var)
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # print(torch.cuda.is_available())
-    # gcn_model = GCNet().to(device)
-    #
-    # optimizer = torch.optim.Adam(gcn_model.parameters(), lr=0.001)
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
-    # train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=1)
-    # test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
-    #
-    # for epoch in range(1, 200):
-    #     loss1 = model_training(reg, gcn_model, train_loader, device, num_train, optimizer)
-    #     if epoch % 8 == 0:
-    #         loss2 = model_testing(reg, gcn_model, test_loader, device, num_train)
-    #         print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
-    #             epoch, loss1, loss2))
-    #     scheduler.step()
+    train_data = process_data(X_train, pmax, var)
+    test_data = process_data(X_test, pmax, var)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(torch.cuda.is_available())
+    gcn_model = GCNet().to(device)
+
+    optimizer = torch.optim.Adam(gcn_model.parameters(), lr=0.001)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
+    train_loader = DataLoader(train_data, batch_size=64, shuffle=True, num_workers=1)
+    test_loader = DataLoader(test_data, batch_size=2000, shuffle=False, num_workers=1)
+
+    for epoch in range(1, 200):
+        loss1 = model_training(reg, gcn_model, train_loader, device, num_train, optimizer)
+        if epoch % 8 == 0:
+            loss2 = model_testing(reg, gcn_model, test_loader, device, num_train)
+            print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
+                epoch, loss1, loss2))
+        scheduler.step()
     # endregion
 
     # region Supervised learning

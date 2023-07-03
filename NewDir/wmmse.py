@@ -3,72 +3,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def generate_channels_cell_wireless(num_bs, num_users, num_samples, var_noise=1.0, radius=1):
-    # Network: Consisting multiple pairs of Tx and Rx devices, each pair is considered an user.
-    # Input:
-    #     num_users: Number of users in the network
-    #     num_samples: Number of samples using for the model
-    #     var_noise: variance of the AWGN
-    #     p_min: minimum power for each user
-    # Output:
-    #     Hs: channel matrices of all users in the network - size num_samples x num_users x num_users
-    #        H(i,j) is the channel from Tx of the i-th pair to Rx or the j-th pair
-    #     pos: position of all users in the network (?)
-    #     pos[:num_bs] is the position of the BS(s)
-    #     pos[num_bs:num_bs+num_users] is the position of the user(s)
-    #     adj: adjacency matrix of all users in the network - only "1" if interference occurs
+def sum_rate_calculation(channel_matrices, power_matrices, weight_matrices, noise_matrices):
+    num_sample = channel_matrices.shape[0]
+    num_node = channel_matrices.shape[1]
+    all_rx_signal = channel_matrices.transpose(0, 2, 1) @ power_matrices
+    desired_power = np.diagonal(all_rx_signal, axis1=1, axis2=2)
+    desired_power = np.expand_dims(desired_power, axis=1)
 
-    print("Generating Data for training and testing")
+    diagonal_matrix = np.zeros((num_sample, num_node, num_node))
+    for i in range(num_sample):
+        np.fill_diagonal(diagonal_matrix[i], desired_power[i])
 
-    if num_bs != 1:
-        raise Exception("Can not generate data for training and testing with more than 1 base station")
-    # generate position
-    dist_mat = []
-    position = []
-
-    # Calculate channel
-    CH = 1 / np.sqrt(2) * (np.random.randn(num_samples, 1, num_users)
-                           + 1j * np.random.randn(num_samples, 1, num_users))
-
-    if radius == 0:
-        Hs = abs(CH)
-    else:
-        for each_sample in range(num_samples):
-            pos = []
-            pos_BS = []
-
-            for i in range(num_bs):
-                r = 0.2 * radius * (np.random.rand())
-                theta = np.random.rand() * 2 * np.pi
-                pos_BS.append([r * np.sin(theta), r * np.cos(theta)])
-                pos.append([r * np.sin(theta), r * np.cos(theta)])
-            pos_user = []
-
-            for i in range(num_users):
-                r = 0.5 * radius + 0.5 * radius * np.random.rand()
-                theta = np.random.rand() * 2 * np.pi
-                pos_user.append([r * np.sin(theta), r * np.cos(theta)])
-                pos.append([r * np.sin(theta), r * np.cos(theta)])
-
-            pos = np.array(pos)
-            pos_BS = np.array(pos_BS)
-            dist_matrix = distance_matrix(pos_BS, pos_user)
-            # dist_matrixp = distance_matrix(pos[1:], pos[1:])
-            dist_mat.append(dist_matrix)
-            position.append(pos)
-
-        dist_mat = np.array(dist_mat)
-        position = np.array(position)
-
-        # Calculate Free space pathloss
-        f = 6e9
-        c = 3e8
-        FSPL = 1 / ((4 * np.pi * f * dist_mat / c) ** 2)
-        Hs = abs(CH * FSPL)
-
-    adj = adj_matrix(num_users)
-
-    return Hs, position, adj
+    interference = all_rx_signal - diagonal_matrix
+    interference = np.sum(interference, 2)
+    interference = np.expand_dims(interference, axis=1)
+    sinr = np.divide(desired_power, interference + noise_matrices)
+    sumrate = np.log2(1 + sinr)
+    return np.sum(sumrate,2)
 
 
 def draw_network(position, radius):
