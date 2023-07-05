@@ -211,13 +211,16 @@ def data_rate_calc(data, out, num_ap, num_user, train = True):
     G = torch.reshape(out[:, 0], (-1, num_ap, num_user))
     # how to get channel from data and output
     P = torch.reshape(out[:, 2], (-1, num_ap, num_user))
-    desired_signal = torch.sum(torch.mul(P,G), axis=2).unsqueeze(-1)
-    P_UE = torch.sum(P, axis=1).unsqueeze(-1)
+    desired_signal = torch.sum(torch.mul(P, G), dim=2).unsqueeze(-1)
+    P_UE = torch.sum(P, dim=1).unsqueeze(-1)
     all_received_signal = torch.matmul(G, P_UE)
     interference = all_received_signal - desired_signal
     rate = torch.log(1 + torch.div(desired_signal, interference))
     sum_rate = torch.mean(torch.sum(rate, 1))
     if train:
+        # power_max = torch.reshape(out[:, 1], (-1, num_ap, num_user))
+        # regularization = torch.mean(P - power_max)
+        # return torch.neg(sum_rate - regularization)
         return torch.neg(sum_rate)
     else:
         return sum_rate
@@ -228,10 +231,10 @@ if __name__ == '__main__':
 
 
     K = 3  # number of APs
-    N = 4  # number of nodes
+    N = 20  # number of nodes
     R = 10  # radius
 
-    num_train = 20  # number of training samples
+    num_train = 12  # number of training samples
     num_test = 4  # number of test samples
 
     reg = 1e-2
@@ -253,12 +256,12 @@ if __name__ == '__main__':
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
 
-    train_loader = DataLoader(train_data_list, batch_size=64, shuffle=True, num_workers=1)
-    test_loader = DataLoader(test_data_list, batch_size=2000, shuffle=False, num_workers=1)
+    train_loader = DataLoader(train_data_list, batch_size=10, shuffle=True, num_workers=1)
+    test_loader = DataLoader(test_data_list, batch_size=10, shuffle=False, num_workers=1)
 
 
     # Training and Testing model
-    for epoch in range(1, 200):
+    for epoch in range(1, 140):
         total_loss = 0
         for each_data in train_loader:
             data = each_data.to(device)
@@ -271,7 +274,7 @@ if __name__ == '__main__':
 
         train_loss = total_loss / num_train
 
-        if (epoch % 8 == 0):
+        if (epoch % 8 == 1):
             model.eval()
             total_loss = 0
             for each_data in test_loader:
