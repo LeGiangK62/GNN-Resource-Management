@@ -269,7 +269,7 @@ if __name__ == '__main__':
             out = model(data)
             loss = data_rate_calc(data, out, K, N, train=True)
             loss.backward()
-            total_loss += loss.item() + data.num_graphs
+            total_loss += loss.item() * data.num_graphs
             optimizer.step()
 
         train_loss = total_loss / num_train
@@ -281,7 +281,7 @@ if __name__ == '__main__':
                 data = each_data.to(device)
                 out = model(data)
                 loss = data_rate_calc(data, out, K + 1, N + 10, train=False)
-                total_loss += loss.item() + data.num_graphs
+                total_loss += loss.item() * data.num_graphs
 
             test_loss = total_loss / num_test
 
