@@ -11,6 +11,77 @@ from reImplement import GCNet
 from setup_arguments import setup_args
 
 
+def channel_reshape(channel, num_ap, num_user):
+    # input of (num_samples x 1)
+    # output of (num_samples x num_ap x num_user)
+    tmp = np.repeat(
+        np.expand_dims(
+            np.repeat(
+                channel,
+                num_ap, axis=1),
+            axis=2
+        ),
+        num_user,
+        axis=2
+    )
+    return tmp
+
+
+def normalize_matrix(channel_matrix, noise_var):
+    num_samples, num_ap, num_user = channel_matrix.shape
+    max_each_sample = np.expand_dims(
+        np.max(
+            np.max(channel_matrix, axis=2),
+            axis=-1
+        ),
+        axis=1
+        )
+    max_matrix = channel_reshape(max_each_sample, num_ap, num_user)
+
+    min_each_sample = np.expand_dims(
+        np.min(
+            np.min(channel_matrix, axis=2),
+            axis=-1
+        ),
+        axis=1
+    )
+    min_matrix = channel_reshape(min_each_sample, num_ap, num_user)
+
+    noise = np.ones(channel_matrix.shape) * noise_var
+
+    return (
+        (channel_matrix - min_matrix) / (max_matrix - min_matrix),
+        (noise - min_matrix) / (max_matrix - min_matrix),
+    )
+
+def standardization_matrix(channel_matrix, noise_var):
+    num_samples, num_ap, num_user = channel_matrix.shape
+    mean_each_sample = np.expand_dims(
+        np.mean(
+            np.mean(channel_matrix, axis=2),
+            axis=-1
+        ),
+        axis=1
+        )
+    mean_matrix = channel_reshape(mean_each_sample, num_ap, num_user)
+
+    std_each_sample = np.expand_dims(
+        np.std(
+            np.std(channel_matrix, axis=2),
+            axis=-1
+        ),
+        axis=1
+    )
+    std_matrix = channel_reshape(std_each_sample, num_ap, num_user)
+
+    noise = np.ones(channel_matrix.shape) * noise_var
+
+    return (
+        (channel_matrix - mean_matrix) / std_matrix,
+        (noise - mean_matrix) / std_matrix,
+    )
+
+
 def generate_channels_wsn(num_ap, num_user, num_samples, var_noise=1.0, radius=1):
     # print("Generating Data for training and testing")
 
@@ -71,7 +142,9 @@ def generate_channels_wsn(num_ap, num_user, num_samples, var_noise=1.0, radius=1
 
     adj = adj_matrix(num_user * num_ap)
 
-    return Hs, position, adj, index
+    Hs, noise = normalize_matrix(Hs, var_noise)
+
+    return Hs, noise, position, adj, index
 
 
 def adj_matrix(num_nodes):
@@ -101,64 +174,6 @@ def draw_network(position, radius, num_user, num_ap):
     )
     ax.add_patch(circle)
     plt.show()
-
-
-class IGConv(MessagePassing):
-    def __init__(self, mlp1, mlp2, **kwargs):
-        super(IGConv, self).__init__(aggr='max', **kwargs)
-
-        self.mlp1 = mlp1
-        self.mlp2 = mlp2
-        # self.reset_parameters()
-
-    def reset_parameters(self):
-        reset(self.mlp1)
-        reset(self.mlp2)
-
-    def update(self, aggr_out, x):
-        tmp = torch.cat([x, aggr_out], dim=1)
-        comb = self.mlp2(tmp)
-        return torch.cat([x[:, :2], comb], dim=1)
-
-    def forward(self, x, edge_index, edge_attr):
-        x = x.unsqueeze(-1) if x.dim() == 1 else x
-        edge_attr = edge_attr.unsqueeze(-1) if edge_attr.dim() == 1 else edge_attr
-        return self.propagate(edge_index, x=x, edge_attr=edge_attr)
-
-    def message(self, x_i, x_j, edge_attr):
-        tmp = torch.cat([x_j, edge_attr], dim=1)
-        agg = self.mlp1(tmp)
-        return agg
-
-    def __repr__(self):
-        return '{}(nn={})'.format(self.__class__.__name__, self.mlp1, self.mlp2)
-
-
-def MLP(channels, batch_norm=True):
-    return Seq(*[
-        Seq(Lin(channels[i - 1], channels[i], bias=True), ReLU())  # , BN(channels[i]))
-        for i in range(1, len(channels))
-    ])
-
-
-class IGCNet(torch.nn.Module):
-    def __init__(self):
-        super(IGCNet, self).__init__()
-
-        self.mlp1 = MLP([5, 16, 32])
-        self.mlp2 = MLP([35, 16])
-        self.mlp2 = Seq(*[self.mlp2, Seq(Lin(16, 1, bias=True), Sigmoid())])
-        self.conv = IGConv(self.mlp1, self.mlp2)
-
-    def forward(self, data):
-        x0, edge_attr, edge_index = data.x, data.edge_attr, data.edge_index
-        x1 = self.conv(x=x0, edge_index=edge_index, edge_attr=edge_attr)
-        x2 = self.conv(x=x1, edge_index=edge_index, edge_attr=edge_attr)
-        # x3 = self.conv(x = x2, edge_index = edge_index, edge_attr = edge_attr)
-        # x4 = self.conv(x = x3, edge_index = edge_index, edge_attr = edge_attr)
-        out = self.conv(x=x2, edge_index=edge_index, edge_attr=edge_attr)
-        return out
-
 
 
 def graph_build(channel_matrix, index_matrix):
@@ -217,34 +232,31 @@ def data_rate_calc(data, out, num_ap, num_user, train = True):
     interference = all_received_signal - desired_signal
     rate = torch.log(1 + torch.div(desired_signal, interference))
     sum_rate = torch.mean(torch.sum(rate, 1))
+    mean_power = torch.mean(torch.sum(P_UE, 1))
     if train:
-        # power_max = torch.reshape(out[:, 1], (-1, num_ap, num_user))
-        # regularization = torch.mean(P - power_max)
-        # return torch.neg(sum_rate - regularization)
-        return torch.neg(sum_rate)
+        return torch.neg(sum_rate / mean_power)
     else:
-        return sum_rate
-
+        return sum_rate / mean_power
 
 if __name__ == '__main__':
     # args = setup_args()
 
 
     K = 3  # number of APs
-    N = 20  # number of nodes
+    N = 5  # number of nodes
     R = 10  # radius
 
-    num_train = 12  # number of training samples
+    num_train = 2  # number of training samples
     num_test = 4  # number of test samples
 
     reg = 1e-2
     pmax = 1
     var_db = 10
     var = 1 / 10 ** (var_db / 10)
+    var_noise = 10e-11
 
-    # Generate Data for training and testing
-    X_train, pos_train, adj_train, index_train = generate_channels_wsn(K, N, num_train, var, R)
-    X_test, pos_test, adj_test, index_test = generate_channels_wsn(K + 1, N + 10, num_test, var, R)
+    X_train, noise_train, pos_train, adj_train, index_train = generate_channels_wsn(K, N, num_train, var_noise, R)
+    X_test, noise_test, pos_test, adj_test, index_test = generate_channels_wsn(K + 1, N + 10, num_test, var_noise, R)
 
     # Preparing Data in to graph structured for model
     train_data_list = build_all_data(X_train, index_train)
@@ -259,9 +271,10 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_data_list, batch_size=10, shuffle=True, num_workers=1)
     test_loader = DataLoader(test_data_list, batch_size=10, shuffle=False, num_workers=1)
 
-
+    training_loss = []
+    testing_loss = []
     # Training and Testing model
-    for epoch in range(1, 140):
+    for epoch in range(1, 100):
         total_loss = 0
         for each_data in train_loader:
             data = each_data.to(device)
@@ -274,20 +287,48 @@ if __name__ == '__main__':
 
         train_loss = total_loss / num_train
 
+        model.eval()
+        total_loss = 0
+        for each_data in test_loader:
+            data = each_data.to(device)
+            out = model(data)
+            loss = data_rate_calc(data, out, K + 1, N + 10, train=False)
+            total_loss += loss.item() * data.num_graphs
+
+        test_loss = total_loss / num_test
+
+        training_loss.append(train_loss)
+        testing_loss.append(test_loss)
         if (epoch % 8 == 1):
-            model.eval()
-            total_loss = 0
-            for each_data in test_loader:
-                data = each_data.to(device)
-                out = model(data)
-                loss = data_rate_calc(data, out, K + 1, N + 10, train=False)
-                total_loss += loss.item() * data.num_graphs
-
-            test_loss = total_loss / num_test
-
             print('Epoch {:03d}, Train Loss: {:.4f}, Val Loss: {:.4f}'.format(
                 epoch, train_loss, test_loss))
         scheduler.step()
 
+    # Creating the first axis
+    fig, ax1 = plt.subplots()
 
+    # Plotting the first data on the first axis
+    ax1.plot(training_loss[:100], 'b-', label='Training Loss')
+    ax1.set_xlabel('Epoch(s)')
+    ax1.set_ylabel('Training Loss', color='b')
+    ax1.tick_params('y', colors='b')
+
+    # Creating the second axis
+    ax2 = ax1.twinx()
+
+    # Plotting the second data on the second axis
+    ax2.plot(testing_loss[:100], 'r-', label='Testing Data Rate')
+    ax2.set_ylabel('Testing Data Rate', color='r')
+    ax2.tick_params('y', colors='r')
+
+    # Combining the legends
+    lines_1, labels_1 = ax1.get_legend_handles_labels()
+    lines_2, labels_2 = ax2.get_legend_handles_labels()
+    lines = lines_1 + lines_2
+    labels = labels_1 + labels_2
+
+    ax1.legend(lines, labels, loc='center left', bbox_to_anchor=(0, 0.5))
+
+    # Display the plot
+    plt.show()
 
