@@ -222,21 +222,33 @@ def build_all_data(channel_matrices, index_mtx):
 
     return data_list
 
-def data_rate_calc(data, out, num_ap, num_user, train = True):
-    G = torch.reshape(out[:, 0], (-1, num_ap, num_user))
+def data_rate_calc(data, out, num_ap, num_user, noise_matrix, train = True, isLog=False):
+    G = torch.reshape(out[:, 0], (-1, num_ap, num_user))  #/ noise
+    #
     # how to get channel from data and output
     P = torch.reshape(out[:, 2], (-1, num_ap, num_user))
-    desired_signal = torch.sum(torch.mul(P, G), dim=2).unsqueeze(-1)
+    desired_signal = torch.sum(torch.mul(P,G), dim=2).unsqueeze(-1)
     P_UE = torch.sum(P, dim=1).unsqueeze(-1)
     all_received_signal = torch.matmul(G, P_UE)
-    interference = all_received_signal - desired_signal
+    new_noise = torch.from_numpy(np.reshape(noise_matrix, (-1, num_ap, num_user)))
+    interference = all_received_signal - desired_signal + new_noise
     rate = torch.log(1 + torch.div(desired_signal, interference))
     sum_rate = torch.mean(torch.sum(rate, 1))
     mean_power = torch.mean(torch.sum(P_UE, 1))
+
+    if(isLog):
+      print(f'Channel Coefficient: {G}')
+      print(f'Power: {P}')
+      print(f'desired_signal: {desired_signal}')
+      print(f'P_UE: {P_UE}')
+      print(f'all_received_signal: {all_received_signal}')
+      print(f'interference: {interference}')
+
     if train:
-        return torch.neg(sum_rate / mean_power)
+        return torch.neg(sum_rate/mean_power)
     else:
-        return sum_rate / mean_power
+        return sum_rate/mean_power
+
 
 if __name__ == '__main__':
     # args = setup_args()
@@ -280,7 +292,7 @@ if __name__ == '__main__':
             data = each_data.to(device)
             optimizer.zero_grad()
             out = model(data)
-            loss = data_rate_calc(data, out, K, N, train=True)
+            loss = data_rate_calc(data, out, K, N, noise_train, train=True)
             loss.backward()
             total_loss += loss.item() * data.num_graphs
             optimizer.step()
@@ -292,7 +304,7 @@ if __name__ == '__main__':
         for each_data in test_loader:
             data = each_data.to(device)
             out = model(data)
-            loss = data_rate_calc(data, out, K + 1, N + 10, train=False)
+            loss = data_rate_calc(data, out, K + 1, N + 10, noise_test, train=False)
             total_loss += loss.item() * data.num_graphs
 
         test_loss = total_loss / num_test
