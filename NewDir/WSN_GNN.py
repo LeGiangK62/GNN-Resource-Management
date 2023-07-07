@@ -49,9 +49,13 @@ def normalize_matrix(channel_matrix, noise_var):
 
     noise = np.ones(channel_matrix.shape) * noise_var
 
+    # return (
+    #     (channel_matrix - min_matrix) / (max_matrix - min_matrix),
+    #     (noise - min_matrix) / (max_matrix - min_matrix),
+    # )
     return (
-        (channel_matrix - min_matrix) / (max_matrix - min_matrix),
-        (noise - min_matrix) / (max_matrix - min_matrix),
+        (channel_matrix / max_matrix),
+        (noise / max_matrix),
     )
 
 def standardization_matrix(channel_matrix, noise_var):
@@ -223,7 +227,7 @@ def build_all_data(channel_matrices, index_mtx):
     return data_list
 
 def data_rate_calc(data, out, num_ap, num_user, noise_matrix, train = True, isLog=False):
-    G = torch.reshape(out[:, 0], (-1, num_ap, num_user))  #/ noise
+    G = torch.reshape(out[:, 0], (-1, num_ap, num_user))
     #
     # how to get channel from data and output
     P = torch.reshape(out[:, 2], (-1, num_ap, num_user))
