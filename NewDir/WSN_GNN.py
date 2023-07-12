@@ -253,6 +253,24 @@ def data_rate_calc(data, out, num_ap, num_user, noise_matrix, p_max, train = Tru
     else:
         return sum_rate/mean_power
 
+
+def ap_selection(power_matrix):
+    max_vals = np.amax(power_matrix, axis=0)
+    mask = power_matrix != max_vals
+    power_matrix[mask] = 0
+
+    return power_matrix
+
+
+def data_rate_calc_numpy(G, P, noise_var):
+    desired_signal = np.sum(P * G, axis=1)
+    P_UE = np.sum(P, axis = 0)
+    all_received_signal = G @ P_UE
+    interference = all_received_signal - desired_signal
+    rate = desired_signal / (interference + noise_var)
+    return np.sum(rate)
+
+
 if __name__ == '__main__':
     # args = setup_args()
 
