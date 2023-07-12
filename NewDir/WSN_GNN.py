@@ -226,15 +226,15 @@ def build_all_data(channel_matrices, index_mtx):
 
     return data_list
 
-def data_rate_calc(data, out, num_ap, num_user, noise_matrix, train = True, isLog=False):
-    G = torch.reshape(out[:, 0], (-1, num_ap, num_user))
-    #
+def data_rate_calc(data, out, num_ap, num_user, noise_matrix, p_max, train = True, isLog=False):
+    G = torch.reshape(out[:, 0], (-1, num_ap, num_user))  #/ noise
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # how to get channel from data and output
-    P = torch.reshape(out[:, 2], (-1, num_ap, num_user))
+    P = torch.reshape(out[:, 2], (-1, num_ap, num_user)) * p_max
     desired_signal = torch.sum(torch.mul(P,G), dim=2).unsqueeze(-1)
     P_UE = torch.sum(P, dim=1).unsqueeze(-1)
     all_received_signal = torch.matmul(G, P_UE)
-    new_noise = torch.from_numpy(np.reshape(noise_matrix, (-1, num_ap, num_user)))
+    new_noise = torch.from_numpy(noise_matrix).to(device)
     interference = all_received_signal - desired_signal + new_noise
     rate = torch.log(1 + torch.div(desired_signal, interference))
     sum_rate = torch.mean(torch.sum(rate, 1))
@@ -253,7 +253,6 @@ def data_rate_calc(data, out, num_ap, num_user, noise_matrix, train = True, isLo
     else:
         return sum_rate/mean_power
 
-
 if __name__ == '__main__':
     # args = setup_args()
 
@@ -270,6 +269,8 @@ if __name__ == '__main__':
     var_db = 10
     var = 1 / 10 ** (var_db / 10)
     var_noise = 10e-11
+
+    power_threshold = 2.0
 
     X_train, noise_train, pos_train, adj_train, index_train = generate_channels_wsn(K, N, num_train, var_noise, R)
     X_test, noise_test, pos_test, adj_test, index_test = generate_channels_wsn(K + 1, N + 10, num_test, var_noise, R)
@@ -296,7 +297,7 @@ if __name__ == '__main__':
             data = each_data.to(device)
             optimizer.zero_grad()
             out = model(data)
-            loss = data_rate_calc(data, out, K, N, noise_train, train=True)
+            loss = data_rate_calc(data, out, K, N, noise_train, power_threshold, train=True)
             loss.backward()
             total_loss += loss.item() * data.num_graphs
             optimizer.step()
@@ -308,7 +309,7 @@ if __name__ == '__main__':
         for each_data in test_loader:
             data = each_data.to(device)
             out = model(data)
-            loss = data_rate_calc(data, out, K + 1, N + 10, noise_test, train=False)
+            loss = data_rate_calc(data, out, K + 1, N + 10, noise_test, power_threshold,  train=False)
             total_loss += loss.item() * data.num_graphs
 
         test_loss = total_loss / num_test
