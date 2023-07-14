@@ -231,6 +231,10 @@ def data_rate_calc(data, out, num_ap, num_user, noise_matrix, p_max, train = Tru
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # how to get channel from data and output
     P = torch.reshape(out[:, 2], (-1, num_ap, num_user)) * p_max
+    # ## ap selection part
+    # ap_select = torch.reshape(out[:, 1], (-1, num_ap, num_user))
+    # P = torch.mul(P, ap_select)
+    # ##
     desired_signal = torch.sum(torch.mul(P,G), dim=2).unsqueeze(-1)
     P_UE = torch.sum(P, dim=1).unsqueeze(-1)
     all_received_signal = torch.matmul(G, P_UE)
