@@ -16,8 +16,11 @@ def convert_to_hetero_data(channel_matrices):
     graph_list = []
     num_sam, num_aps, num_users = channel_matrices.shape
     for i in range(num_sam):
-        user_feat = torch.randn(num_users, num_users_features)  # features of user_node
-        ap_feat = torch.randn(num_aps, num_aps_features)  # features of user_node
+        x1 = torch.ones(num_users, 1)
+        x2 = torch.ones(num_users, 1)  # power allocation
+        x3 = torch.ones(num_users, 1)  # ap selection?
+        user_feat = torch.cat((x1,x2,x3),1)  # features of user_node
+        ap_feat = torch.zeros(num_aps, num_aps_features)  # features of user_node
         edge_feat_uplink = channel_matrices[i, :, :].reshape(-1, 1)
         edge_feat_downlink = channel_matrices[i, :, :].reshape(-1, 1)
         graph = HeteroData({
@@ -26,6 +29,7 @@ def convert_to_hetero_data(channel_matrices):
         })
         # Create edge types and building the graph connectivity:
         graph['user', 'uplink', 'ap'].edge_attr = torch.tensor(edge_feat_uplink, dtype=torch.float)
+        graph['ap', 'downlink', 'user'].edge_attr = torch.tensor(edge_feat_downlink, dtype=torch.float)
         graph['user', 'uplink', 'ap'].edge_index = torch.tensor(adj_matrix(num_users, num_aps).transpose(), dtype=torch.int64)
         graph['ap', 'downlink', 'user'].edge_index = torch.tensor(adj_matrix(num_aps, num_users).transpose(),
                                                                 dtype=torch.int64)
@@ -132,72 +136,70 @@ class HetNetGNN(torch.nn.Module):
 
 
 #region Training and Testing functions
-def loss_function(data, out, num_ap, num_user, noise_matrix, p_max, train = True, isLog=False):
-    # Loss function only takes data and the output to calculate energy efficiency
-
-    G = torch.reshape(out[:, 0], (-1, num_ap, num_user))  #/ noise
+def loss_function(output, batch, is_train=True):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # how to get channel from data and output
-    P = torch.reshape(out[:, 2], (-1, num_ap, num_user)) * p_max
-    # ## ap selection part
-    # ap_select = torch.reshape(out[:, 1], (-1, num_ap, num_user))
-    # P = torch.mul(P, ap_select)
-    # ##
-    desired_signal = torch.sum(torch.mul(P,G), dim=2).unsqueeze(-1)
+    num_user = batch['user']['x'].shape[0]
+    num_ap = batch['ap']['x'].shape[0]
+    ##
+    channel_matrix = batch['user', 'ap']['edge_attr']
+    power_max = batch['user']['x'][:, 0]
+    power = batch['user']['x'][:, 1]
+    ap_selection = batch['user']['x'][:, 2]
+    index = torch.arange(num_user)
+
+    G = torch.reshape(channel_matrix, (-1, num_ap, num_user))
+    # P = torch.reshape(power, (-1, num_ap, num_user)) #* p_max
+    P = torch.zeros(G.shape)
+    P[0, ap_selection[index], index] = power_max * power
+    ##
+    desired_signal = torch.sum(torch.mul(P, G), dim=2).unsqueeze(-1)
     P_UE = torch.sum(P, dim=1).unsqueeze(-1)
     all_received_signal = torch.matmul(G, P_UE)
-    new_noise = torch.from_numpy(noise_matrix).to(device)
-    interference = all_received_signal - desired_signal + new_noise
+    # new_noise = torch.from_numpy(noise_matrix).to(device)
+    interference = all_received_signal - desired_signal #+ new_noise
     rate = torch.log(1 + torch.div(desired_signal, interference))
     sum_rate = torch.mean(torch.sum(rate, 1))
     mean_power = torch.mean(torch.sum(P_UE, 1))
 
-    if(isLog):
-      print(f'Channel Coefficient: {G}')
-      print(f'Power: {P}')
-      print(f'desired_signal: {desired_signal}')
-      print(f'P_UE: {P_UE}')
-      print(f'all_received_signal: {all_received_signal}')
-      print(f'interference: {interference}')
-
-    if train:
-        return torch.neg(sum_rate/mean_power)
+    if is_train:
+        return torch.neg(sum_rate / mean_power)
     else:
-        return sum_rate/mean_power
+        return sum_rate / mean_power
 
 
-def train(device_type, data_loader):
+def train(data_loader):
     model.train()
-
+    device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     total_examples = total_loss = 0
     for batch in data_loader:
         optimizer.zero_grad()
         batch = batch.to(device_type)
-        batch_size = batch['user'].batch_size
+        # batch_size = batch['user'].batch_size
         out = model(batch.x_dict, batch.edge_index_dict)
-        loss = loss_function(data, out)
-        loss.backward()
+        tmp_loss = loss_function(out, data, True)
+        tmp_loss.backward()
         optimizer.step()
-        total_examples += batch_size
-        total_loss += float(loss) * batch_size
+        #total_examples += batch_size
+        total_loss += float(tmp_loss) #* batch_size
 
-    return total_loss / total_examples
+    return total_loss #/ total_examples
 
 
-def test(device_type, data_loader):
+def test(data_loader):
     model.eval()
-
+    device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     total_examples = total_loss = 0
     for batch in data_loader:
         batch = batch.to(device_type)
-        batch_size = batch['user'].batch_size
+        # batch_size = batch['user'].batch_size
         out = model(batch.x_dict, batch.edge_index_dict)
-        loss = loss_function(data, out)
-        total_examples += batch_size
-        total_loss += float(loss) * batch_size
+        tmp_loss = loss_function(out, batch, False)
+        #total_examples += batch_size
+        total_loss += float(tmp_loss) #* batch_size
 
-    return total_loss / total_examples
+    return total_loss #/ total_examples
 #endregion
+
 
 if __name__ == '__main__':
     K = 3  # number of APs
@@ -226,7 +228,9 @@ if __name__ == '__main__':
     test_data = convert_to_hetero_data(X_test)
 
     batchSize = 100
+
     train_loader = DataLoader(train_data, batchSize, shuffle=True, num_workers=1)
+    test_loader = DataLoader(test_data, batchSize, shuffle=True, num_workers=1)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -236,18 +240,25 @@ if __name__ == '__main__':
     model = HetNetGNN(data, hidden_channels=64, out_channels=4, num_heads=2, num_layers=1)
     model = model.to(device)
 
-    # # print(data.edge_index_dict)
-    with torch.no_grad():
-        output = model(data.x_dict, data.edge_index_dict)
-        print(output)
+    # # # print(data.edge_index_dict)
+    # with torch.no_grad():
+    #     output = model(data.x_dict, data.edge_index_dict)
+    # print(output)
+    # print(data)
 
-    data = test_data[0]
-    data = data.to(device)
-
-    with torch.no_grad():
-        output = model(data.x_dict, data.edge_index_dict)
-        print(output)
+    # data = test_data[0]
+    # data = data.to(device)
+    #
+    # with torch.no_grad():
+    #     output = model(data.x_dict, data.edge_index_dict)
+    #     print(output)
 
     # Training and testing
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
+
+    for epoch in range(1, 101):
+        loss = train(train_loader)
+        test_acc = test(test_loader)
+        print(f'Epoch: {epoch:03d}, Train Loss: {loss:.4f}, Test Reward: {test_acc:.4f}')
+

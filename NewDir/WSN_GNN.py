@@ -245,12 +245,12 @@ def data_rate_calc(data, out, num_ap, num_user, noise_matrix, p_max, train = Tru
     mean_power = torch.mean(torch.sum(P_UE, 1))
 
     if(isLog):
-      print(f'Channel Coefficient: {G}')
-      print(f'Power: {P}')
-      print(f'desired_signal: {desired_signal}')
-      print(f'P_UE: {P_UE}')
-      print(f'all_received_signal: {all_received_signal}')
-      print(f'interference: {interference}')
+        print(f'Channel Coefficient: {G}')
+        print(f'Power: {P}')
+        print(f'desired_signal: {desired_signal}')
+        print(f'P_UE: {P_UE}')
+        print(f'all_received_signal: {all_received_signal}')
+        print(f'interference: {interference}')
 
     if train:
         return torch.neg(sum_rate/mean_power)
