@@ -18,7 +18,7 @@ def convert_to_hetero_data(channel_matrices):
     for i in range(num_sam):
         x1 = torch.ones(num_users, 1)
         x2 = torch.ones(num_users, 1)  # power allocation
-        x3 = torch.ones(num_users, 1)  # ap selection?
+        x3 = torch.ones((num_users, 1), dtype=torch.int32)  # ap selection?
         user_feat = torch.cat((x1,x2,x3),1)  # features of user_node
         ap_feat = torch.zeros(num_aps, num_aps_features)  # features of user_node
         edge_feat_uplink = channel_matrices[i, :, :].reshape(-1, 1)
