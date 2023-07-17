@@ -24,17 +24,17 @@ def convert_to_hetero_data(channel_matrices):
         edge_feat_uplink = channel_matrices[i, :, :].reshape(-1, 1)
         edge_feat_downlink = channel_matrices[i, :, :].reshape(-1, 1)
         graph = HeteroData({
-            'user': {'x': user_feat},
+            'ue': {'x': user_feat},
             'ap': {'x': ap_feat}
         })
         # Create edge types and building the graph connectivity:
-        graph['user', 'uplink', 'ap'].edge_attr = torch.tensor(edge_feat_uplink, dtype=torch.float)
-        graph['ap', 'downlink', 'user'].edge_attr = torch.tensor(edge_feat_downlink, dtype=torch.float)
-        graph['user', 'uplink', 'ap'].edge_index = torch.tensor(adj_matrix(num_users, num_aps).transpose(), dtype=torch.int64)
-        graph['ap', 'downlink', 'user'].edge_index = torch.tensor(adj_matrix(num_aps, num_users).transpose(),
+        graph['ue', 'uplink', 'ap'].edge_attr = torch.tensor(edge_feat_uplink, dtype=torch.float)
+        graph['ap', 'downlink', 'ue'].edge_attr = torch.tensor(edge_feat_downlink, dtype=torch.float)
+        graph['ue', 'uplink', 'ap'].edge_index = torch.tensor(adj_matrix(num_users, num_aps).transpose(), dtype=torch.int64)
+        graph['ap', 'downlink', 'ue'].edge_index = torch.tensor(adj_matrix(num_aps, num_users).transpose(),
                                                                 dtype=torch.int64)
 
-        # graph['ap', 'downlink', 'user'].edge_attr  = torch.tensor(edge_feat_downlink, dtype=torch.float)
+        # graph['ap', 'downlink', 'ue'].edge_attr  = torch.tensor(edge_feat_downlink, dtype=torch.float)
         graph_list.append(graph)
     return graph_list
 
@@ -83,13 +83,13 @@ def adj_matrix(num_from, num_dest):
 #         ap_feat = torch.zeros(num_aps, num_aps_features)  # features of user_node
 #         edge_feat = self.channel_matrices[index, :, :]
 #         graph = HeteroData({
-#             'user': {'x': user_feat},
+#             'ue': {'x': user_feat},
 #             'ap': {'x': ap_feat}
 #         })
 #
 #         # Create edge types and building the graph connectivity:
-#         graph['user', 'up', 'ap'].edge_index = torch.tensor(edge_feat, dtype=torch.float)
-#         # graph['ap', 'down', 'user'].edge_index = torch.tensor(edge_feat, dtype=torch.float)
+#         graph['ue', 'up', 'ap'].edge_index = torch.tensor(edge_feat, dtype=torch.float)
+#         # graph['ap', 'down', 'ue'].edge_index = torch.tensor(edge_feat, dtype=torch.float)
 #         return graph
 #
 #     def build_all_graph(self):
@@ -120,7 +120,10 @@ class HetNetGNN(torch.nn.Module):
 
         self.lin = Linear(hidden_channels, out_channels)
 
+        self.lin1 = Linear(hidden_channels, out_channels)
+
     def forward(self, x_dict, edge_index_dict):
+        original = x_dict['ue'].clone
         x_dict = {
             node_type: self.lin_dict[node_type](x).relu_()
             for node_type, x in x_dict.items()
@@ -129,7 +132,13 @@ class HetNetGNN(torch.nn.Module):
         for conv in self.convs:
             x_dict = conv(x_dict, edge_index_dict)
 
-        return self.lin(x_dict['user'])
+        original = x_dict['ue']  # not original
+        power = self.lin(x_dict['ue'])
+        ap_selection = self.lin1(x_dict['ue'])
+        ap_selection = torch.abs(ap_selection).int()
+
+        out = torch.cat((original[:, 1].unsqueeze(-1), power[:, 1].unsqueeze(-1), ap_selection[:, 1].unsqueeze(-1)), 1)
+        return out
 
 
 #endregion
@@ -138,33 +147,40 @@ class HetNetGNN(torch.nn.Module):
 #region Training and Testing functions
 def loss_function(output, batch, is_train=True):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    num_user = batch['user']['x'].shape[0]
+    num_user = batch['ue']['x'].shape[0]
     num_ap = batch['ap']['x'].shape[0]
     ##
-    channel_matrix = batch['user', 'ap']['edge_attr']
-    power_max = batch['user']['x'][:, 0]
-    power = batch['user']['x'][:, 1]
-    ap_selection = batch['user']['x'][:, 2]
+    channel_matrix = batch['ue', 'ap']['edge_attr']
+    ##
+    power_max = output[:, 0]
+    power = output[:, 1]
+    ap_selection = output[:, 2]
+    # power_max = batch['ue']['x'][:, 0]
+    # power = batch['ue']['x'][:, 1]
+    # ap_selection = batch['ue']['x'][:, 2]
+    ##
+    ap_selection = ap_selection.int()
     index = torch.arange(num_user)
 
     G = torch.reshape(channel_matrix, (-1, num_ap, num_user))
     # P = torch.reshape(power, (-1, num_ap, num_user)) #* p_max
-    P = torch.zeros(G.shape)
+    P = torch.zeros_like(G, requires_grad=True).clone()
     P[0, ap_selection[index], index] = power_max * power
     ##
-    desired_signal = torch.sum(torch.mul(P, G), dim=2).unsqueeze(-1)
-    P_UE = torch.sum(P, dim=1).unsqueeze(-1)
-    all_received_signal = torch.matmul(G, P_UE)
     # new_noise = torch.from_numpy(noise_matrix).to(device)
-    interference = all_received_signal - desired_signal #+ new_noise
+    desired_signal = torch.sum(torch.mul(P, G), dim=1).unsqueeze(-1)
+    G_UE = torch.sum(G, dim=2).unsqueeze(-1)
+    all_signal = torch.matmul(P.permute((0,2,1)), G_UE)
+    interference = all_signal - desired_signal #+ new_noise
     rate = torch.log(1 + torch.div(desired_signal, interference))
     sum_rate = torch.mean(torch.sum(rate, 1))
-    mean_power = torch.mean(torch.sum(P_UE, 1))
+    mean_power = torch.mean(torch.sum(P.permute((0,2,1)), 1))
 
     if is_train:
         return torch.neg(sum_rate / mean_power)
     else:
         return sum_rate / mean_power
+
 
 
 def train(data_loader):
@@ -174,7 +190,11 @@ def train(data_loader):
     for batch in data_loader:
         optimizer.zero_grad()
         batch = batch.to(device_type)
-        # batch_size = batch['user'].batch_size
+        # Add counting part here => to reshape output when calculate loss
+        # K = d_train.shape[-1]
+        # n = len(g.nodes['UE'].data['feat'])
+        # bs = len(g.nodes['UE'].data['feat']) // K
+        # batch_size = batch['ue'].batch_size
         out = model(batch.x_dict, batch.edge_index_dict)
         tmp_loss = loss_function(out, data, True)
         tmp_loss.backward()
@@ -191,7 +211,7 @@ def test(data_loader):
     total_examples = total_loss = 0
     for batch in data_loader:
         batch = batch.to(device_type)
-        # batch_size = batch['user'].batch_size
+        # batch_size = batch['ue'].batch_size
         out = model(batch.x_dict, batch.edge_index_dict)
         tmp_loss = loss_function(out, batch, False)
         #total_examples += batch_size
@@ -227,7 +247,7 @@ if __name__ == '__main__':
     train_data = convert_to_hetero_data(X_train)
     test_data = convert_to_hetero_data(X_test)
 
-    batchSize = 100
+    batchSize = 1
 
     train_loader = DataLoader(train_data, batchSize, shuffle=True, num_workers=1)
     test_loader = DataLoader(test_data, batchSize, shuffle=True, num_workers=1)
@@ -253,12 +273,27 @@ if __name__ == '__main__':
     #     output = model(data.x_dict, data.edge_index_dict)
     #     print(output)
 
+
+
     # Training and testing
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
 
-    for epoch in range(1, 101):
-        loss = train(train_loader)
-        test_acc = test(test_loader)
-        print(f'Epoch: {epoch:03d}, Train Loss: {loss:.4f}, Test Reward: {test_acc:.4f}')
+    # Test
+    model.train()
+    device_type = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    total_examples = total_loss = 0
+    for batch in train_loader:
+        optimizer.zero_grad()
+        batch = batch.to(device_type)
+        # batch_size = batch['ue'].batch_size
+        break
+    # print(batch)
+    out = model(batch.x_dict, batch.edge_index_dict)
+    print(out)
+    #
+    # for epoch in range(1, 101):
+    #     loss = train(train_loader)
+    #     test_acc = test(test_loader)
+    #     print(f'Epoch: {epoch:03d}, Train Loss: {loss:.4f}, Test Reward: {test_acc:.4f}')
 
